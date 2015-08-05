@@ -37,7 +37,7 @@ public class RunOrderCalculatorTest
     {
         getClassesToRun();
         TestsToRun testsToRun = new TestsToRun( getClassesToRun() );
-        RunOrderCalculator runOrderCalculator = new DefaultRunOrderCalculator( RunOrderParameters.alphabetical(), 1 );
+        RunOrderCalculator runOrderCalculator = new DefaultRunOrderCalculator( RunOrderParameters.alphabetical(), 1, null );
         final TestsToRun testsToRun1 = runOrderCalculator.orderTestClasses( testsToRun );
         assertEquals( A.class, testsToRun1.iterator().next() );
 

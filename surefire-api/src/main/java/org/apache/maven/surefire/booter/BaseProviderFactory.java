@@ -98,7 +98,8 @@ public class BaseProviderFactory
     public RunOrderCalculator getRunOrderCalculator()
     {
         return directoryScannerParameters == null
-                ? null : new DefaultRunOrderCalculator( runOrderParameters, getThreadCount() );
+                ? null : new DefaultRunOrderCalculator( runOrderParameters, getThreadCount(), 
+                         providerProperties.get( ProviderParameterNames.RANDOMSEED_PROP ) );
     }
 
     public ReporterFactory getReporterFactory()

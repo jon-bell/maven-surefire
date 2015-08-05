@@ -44,4 +44,5 @@ public class ProviderParameterNames
 
     public static final String PARALLEL_OPTIMIZE_PROP = "paralleloptimization";
 
+    public static final String RANDOMSEED_PROP = "randomseed";
 }
