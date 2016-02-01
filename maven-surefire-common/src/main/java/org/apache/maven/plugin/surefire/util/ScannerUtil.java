@@ -27,20 +27,22 @@ final class ScannerUtil
 
     private ScannerUtil()
     {
+        throw new IllegalStateException( "not instantiable constructor" );
     }
 
+    @Deprecated
     private static final String FS = System.getProperty( "file.separator" );
 
+    @Deprecated
     private static final boolean IS_NON_UNIX_FS = ( !FS.equals( "/" ) );
 
-    @SuppressWarnings( "checkstyle:modifierorder" )
-    public static @Nonnull String convertJarFileResourceToJavaClassName( @Nonnull String test )
+    @Nonnull public static String convertJarFileResourceToJavaClassName( @Nonnull String test )
     {
         return StringUtils.removeEnd( test, ".class" ).replace( "/", "." );
     }
 
-    @SuppressWarnings( "checkstyle:modifierorder" )
-    public static @Nonnull String convertSlashToSystemFileSeparator( @Nonnull String path )
+    @Deprecated
+    @Nonnull public static String convertSlashToSystemFileSeparator( @Nonnull String path )
     {
         return ( IS_NON_UNIX_FS ? path.replace( "/", FS ) : path );
     }

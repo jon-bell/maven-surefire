@@ -19,6 +19,8 @@ package org.apache.maven.plugin.surefire.booterclient.lazytestprovider;
  * under the License.
  */
 
+import org.apache.maven.surefire.booter.Shutdown;
+
 /**
  * Forked jvm notifies master process to provide a new test.
  *
@@ -28,5 +30,19 @@ package org.apache.maven.plugin.surefire.booterclient.lazytestprovider;
  */
 public interface NotifiableTestStream
 {
+    /**
+     * Notifies {@link TestProvidingInputStream} in order to dispatch a new test back to the forked
+     * jvm (particular fork which hits this call); or do nothing in {@link TestLessInputStream}.
+     */
     void provideNewTest();
+
+    /**
+     * Sends an event to a fork jvm in order to skip tests.
+     * Returns immediately without blocking.
+     */
+    void skipSinceNextTest();
+
+    void shutdown( Shutdown shutdownType );
+
+    void noop();
 }

@@ -97,10 +97,8 @@ class BooterSerializer
         {
             properties.setProperty( SOURCE_DIRECTORY, testSuiteDefinition.getTestSourceDirectory() );
             properties.addList( testSuiteDefinition.getSuiteXmlFiles(), TEST_SUITE_XML_FILES );
-            TestListResolver methodFilter = testSuiteDefinition.getTestListResolver();
-            String requestedTest =
-                methodFilter == null || methodFilter.isEmpty() ? null : methodFilter.getPluginParameterTest();
-            properties.setNullableProperty( REQUESTEDTEST, requestedTest );
+            TestListResolver testFilter = testSuiteDefinition.getTestListResolver();
+            properties.setProperty( REQUESTEDTEST, testFilter == null ? "" : testFilter.getPluginParameterTest() );
             properties.setNullableProperty( RERUN_FAILING_TESTS_COUNT,
                                             String.valueOf( testSuiteDefinition.getRerunFailingTestsCount() ) );
         }
@@ -133,6 +131,8 @@ class BooterSerializer
         properties.setProperty( USEMANIFESTONLYJAR, String.valueOf( classLoaderConfig.isUseManifestOnlyJar() ) );
         properties.setProperty( FAILIFNOTESTS, String.valueOf( booterConfiguration.isFailIfNoTests() ) );
         properties.setProperty( PROVIDER_CONFIGURATION, providerConfiguration.getProviderClassName() );
+        properties.setProperty( FAIL_FAST_COUNT, String.valueOf( booterConfiguration.getSkipAfterFailureCount() ) );
+        properties.setProperty( SHUTDOWN, booterConfiguration.getShutdown().name() );
         List<CommandLineOption> mainCliOptions = booterConfiguration.getMainCliOptions();
         if ( mainCliOptions != null )
         {

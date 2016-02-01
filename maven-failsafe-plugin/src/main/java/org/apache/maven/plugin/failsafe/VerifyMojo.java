@@ -79,6 +79,7 @@ public class VerifyMojo
      * @since 2.3
      * @deprecated Use -DskipTests instead.
      */
+    @Deprecated
     @Parameter( property = "maven.test.skip.exec" )
     private boolean skipExec;
 
@@ -154,7 +155,7 @@ public class VerifyMojo
      * The current build session instance.
      */
     @Component
-    protected MavenSession session;
+    private MavenSession session;
 
     private Collection<CommandLineOption> cli;
 

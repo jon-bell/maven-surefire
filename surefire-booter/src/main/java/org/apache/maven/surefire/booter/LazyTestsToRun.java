@@ -23,8 +23,11 @@ import java.io.PrintStream;
 import java.util.Collections;
 import java.util.Iterator;
 
-import org.apache.maven.surefire.util.ReflectionUtils;
+import org.apache.maven.surefire.util.CloseableIterator;
 import org.apache.maven.surefire.util.TestsToRun;
+
+import static org.apache.maven.surefire.booter.CommandReader.getReader;
+import static org.apache.maven.surefire.util.ReflectionUtils.loadClass;
 
 /**
  * A variant of TestsToRun that is provided with test class names
@@ -32,6 +35,8 @@ import org.apache.maven.surefire.util.TestsToRun;
  * The method {@link #iterator()} returns an Iterator that blocks on calls to
  * {@link Iterator#hasNext()} or {@link Iterator#next()} until new classes are available, or no more
  * classes will be available or the internal stream is closed.
+ * The iterator can be used only in one Thread and it is the thread which executes
+ * {@link org.apache.maven.surefire.providerapi.SurefireProvider provider implementation}.
  *
  * @author Andreas Gudian
  * @author Tibor Digana
@@ -56,8 +61,7 @@ final class LazyTestsToRun
     private final class BlockingIterator
         implements Iterator<Class<?>>
     {
-        private final Iterator<String> it =
-            MasterProcessReader.getReader().getIterableClasses( originalOutStream ).iterator();
+        private final Iterator<String> it = getReader().getIterableClasses( originalOutStream ).iterator();
 
         public boolean hasNext()
         {
@@ -66,26 +70,36 @@ final class LazyTestsToRun
 
         public Class<?> next()
         {
-            String clazz = it.next();
-            return ReflectionUtils.loadClass( Thread.currentThread().getContextClassLoader(), clazz );
+            return findClass( it.next() );
         }
 
         public void remove()
         {
             throw new UnsupportedOperationException();
         }
-
     }
 
-    /* (non-Javadoc)
-      * @see org.apache.maven.surefire.util.TestsToRun#iterator()
-      */
+    /**
+     * @return test classes which have been retrieved by {@link LazyTestsToRun#iterator()}.
+     */
+    @Override
+    public Iterator<Class<?>> iterated()
+    {
+        return newWeakIterator();
+    }
+
+    /**
+     * The iterator can be used only in one Thread.
+     * {@inheritDoc}
+     * @see org.apache.maven.surefire.util.TestsToRun#iterator()
+     * */
     public Iterator<Class<?>> iterator()
     {
         return new BlockingIterator();
     }
 
     /* (non-Javadoc)
+     * {@inheritDoc}
       * @see org.apache.maven.surefire.util.TestsToRun#toString()
       */
     public String toString()
@@ -94,10 +108,55 @@ final class LazyTestsToRun
     }
 
     /* (non-Javadoc)
+     * {@inheritDoc}
      * @see org.apache.maven.surefire.util.TestsToRun#allowEagerReading()
      */
     public boolean allowEagerReading()
     {
         return false;
+    }
+
+    private static Class<?> findClass( String clazz )
+    {
+        return loadClass( Thread.currentThread().getContextClassLoader(), clazz );
+    }
+
+    /**
+     * @return snapshot of tests upon constructs of {@link CommandReader#iterated() iterator}.
+     * Therefore weakly consistent while {@link LazyTestsToRun#iterator()} is being iterated.
+     */
+    private Iterator<Class<?>> newWeakIterator()
+    {
+        final Iterator<String> it = getReader().iterated();
+        return new CloseableIterator<Class<?>>()
+        {
+            @Override
+            protected boolean isClosed()
+            {
+                return LazyTestsToRun.this.isFinished();
+            }
+
+            @Override
+            protected boolean doHasNext()
+            {
+                return it.hasNext();
+            }
+
+            @Override
+            protected Class<?> doNext()
+            {
+                return findClass( it.next() );
+            }
+
+            @Override
+            protected void doRemove()
+            {
+            }
+
+            public void remove()
+            {
+                throw new UnsupportedOperationException( "unsupported remove" );
+            }
+        };
     }
 }

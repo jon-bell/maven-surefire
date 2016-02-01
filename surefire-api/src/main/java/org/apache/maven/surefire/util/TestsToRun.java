@@ -23,8 +23,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Set;
+
 import org.apache.maven.surefire.testset.TestSetFailedException;
+
+import static java.lang.Math.max;
 
 /**
  * Contains all the tests that have been found according to specified include/exclude
@@ -34,7 +38,11 @@ import org.apache.maven.surefire.testset.TestSetFailedException;
  */
 public class TestsToRun implements Iterable<Class<?>>
 {
-    private final Set<Class<?>> locatedClasses;
+    private final List<Class<?>> locatedClasses;
+
+    private volatile boolean finished;
+
+    private int iteratedCount;
 
     /**
      * Constructor
@@ -43,7 +51,7 @@ public class TestsToRun implements Iterable<Class<?>>
      */
     public TestsToRun( Set<Class<?>> locatedClasses )
     {
-        this.locatedClasses = Collections.unmodifiableSet( locatedClasses );
+        this.locatedClasses = new ArrayList<Class<?>>( locatedClasses );
     }
 
     public static TestsToRun fromClass( Class<?> clazz )
@@ -53,22 +61,79 @@ public class TestsToRun implements Iterable<Class<?>>
     }
 
     /**
+     * @return test classes which have been retrieved by {@link TestsToRun#iterator()}.
+     */
+    public Iterator<Class<?>> iterated()
+    {
+        return newWeakIterator();
+    }
+
+    /**
      * Returns an iterator over the located java.lang.Class objects
      *
      * @return an unmodifiable iterator
      */
     public Iterator<Class<?>> iterator()
     {
-        return locatedClasses.iterator();
+        return new ClassesIterator();
+    }
+
+    private final class ClassesIterator
+        extends CloseableIterator<Class<?>>
+    {
+        private final Iterator<Class<?>> it = TestsToRun.this.locatedClasses.iterator();
+
+        private int iteratedCount;
+
+        @Override
+        protected boolean isClosed()
+        {
+            return TestsToRun.this.isFinished();
+        }
+
+        @Override
+        protected boolean doHasNext()
+        {
+            return it.hasNext();
+        }
+
+        @Override
+        protected Class<?> doNext()
+        {
+            Class<?> nextTest = it.next();
+            TestsToRun.this.iteratedCount = max( ++iteratedCount, TestsToRun.this.iteratedCount );
+            return nextTest;
+        }
+
+        @Override
+        protected void doRemove()
+        {
+        }
+
+        @Override
+        public void remove()
+        {
+            throw new UnsupportedOperationException( "unsupported remove" );
+        }
+    }
+
+    public final void markTestSetFinished()
+    {
+        finished = true;
+    }
+
+    public final boolean isFinished()
+    {
+        return finished;
     }
 
     public String toString()
     {
-        StringBuilder sb = new StringBuilder();
-        sb.append( "TestsToRun: [" );
+        StringBuilder sb = new StringBuilder( "TestsToRun: [" );
         for ( Class<?> clazz : this )
         {
-            sb.append( " " ).append( clazz.getName() );
+            sb.append( ' ' )
+                    .append( clazz.getName() );
         }
 
         sb.append( ']' );
@@ -140,5 +205,45 @@ public class TestsToRun implements Iterable<Class<?>>
             }
         }
         return null;
+    }
+
+    /**
+     * @return snapshot of tests upon constructs of internal iterator.
+     * Therefore weakly consistent while {@link TestsToRun#iterator()} is being iterated.
+     */
+    private Iterator<Class<?>> newWeakIterator()
+    {
+        final Iterator<Class<?>> it = locatedClasses.subList( 0, iteratedCount ).iterator();
+        return new CloseableIterator<Class<?>>()
+        {
+            @Override
+            protected boolean isClosed()
+            {
+                return TestsToRun.this.isFinished();
+            }
+
+            @Override
+            protected boolean doHasNext()
+            {
+                return it.hasNext();
+            }
+
+            @Override
+            protected Class<?> doNext()
+            {
+                return it.next();
+            }
+
+            @Override
+            protected void doRemove()
+            {
+            }
+
+            @Override
+            public void remove()
+            {
+                throw new UnsupportedOperationException( "unsupported remove" );
+            }
+        };
     }
 }

@@ -19,6 +19,7 @@ package org.apache.maven.surefire.providerapi;
  * under the License.
  */
 
+import org.apache.maven.surefire.booter.Shutdown;
 import org.apache.maven.surefire.cli.CommandLineOption;
 import org.apache.maven.surefire.report.ConsoleLogger;
 import org.apache.maven.surefire.report.ReporterConfiguration;
@@ -52,6 +53,7 @@ public interface ProviderParameters
      * @return The directory scanner
      * @deprecated Use scanresult instead, as of version 2.12.2. Will be removed in next major version.
      */
+    @Deprecated
     DirectoryScanner getDirectoryScanner();
 
     /**
@@ -132,4 +134,17 @@ public interface ProviderParameters
     TestArtifactInfo getTestArtifactInfo();
 
     List<CommandLineOption> getMainCliOptions();
+
+    /**
+     * Defaults to 0. Configured with parameter <em>skipAfterFailureCount</em> in POM.
+     */
+    int getSkipAfterFailureCount();
+
+    /**
+     * @return {@code true} if test provider appears in forked jvm; Otherwise {@code false} means
+     * in-plugin provider.
+     */
+    boolean isInsideFork();
+
+    Shutdown getShutdown();
 }

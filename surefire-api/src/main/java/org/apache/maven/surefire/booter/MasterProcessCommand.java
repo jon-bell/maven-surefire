@@ -19,10 +19,13 @@ package org.apache.maven.surefire.booter;
  * under the License.
  */
 
+import org.apache.maven.surefire.util.internal.StringUtils;
+
 import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.nio.charset.Charset;
 
 import static org.apache.maven.surefire.util.internal.StringUtils.FORK_STREAM_CHARSET_NAME;
 import static org.apache.maven.surefire.util.internal.StringUtils.encodeStringForForkCommunication;
@@ -40,10 +43,13 @@ public enum MasterProcessCommand
 {
     RUN_CLASS( 0, String.class ),
     TEST_SET_FINISHED( 1, Void.class ),
-    STOP_ON_NEXT_TEST( 2, Void.class ),
-    SHUTDOWN( 3, Void.class ),
-    /** To tell a forked process that the master process is still alive. Repeated after 30 seconds. */
+    SKIP_SINCE_NEXT_TEST( 2, Void.class ),
+    SHUTDOWN( 3, String.class ),
+
+    /** To tell a forked process that the master process is still alive. Repeated after 10 seconds. */
     NOOP( 4, Void.class );
+
+    private static final Charset ASCII = Charset.forName( "ASCII" );
 
     private final int id;
 
@@ -65,13 +71,24 @@ public enum MasterProcessCommand
         return dataType;
     }
 
+    public boolean hasDataType()
+    {
+        return dataType != Void.class;
+    }
+
     @SuppressWarnings( "checkstyle:magicnumber" )
     public byte[] encode( String data )
     {
+        if ( !hasDataType() )
+        {
+            throw new IllegalArgumentException( "cannot use data without data type" );
+        }
+
         if ( getDataType() != String.class )
         {
-            throw new IllegalArgumentException( "Data type can be only " + getDataType() );
+            throw new IllegalArgumentException( "Data type can be only " + String.class );
         }
+
         byte[] dataBytes = fromDataType( data );
         byte[] encoded = new byte[8 + dataBytes.length];
         int command = getId();
@@ -119,7 +136,8 @@ public enum MasterProcessCommand
                 if ( command.getDataType() == Void.class )
                 {
                     // must read entire sequence to get to the next command; cannot be above the loop
-                    throw new IOException( "Command " + command + " read Void data with length " + dataLength );
+                    throw new IOException( format( "Command %s unexpectedly read Void data with length %d.",
+                                                   command, dataLength ) );
                 }
 
                 if ( total != dataLength )
@@ -129,7 +147,7 @@ public enum MasterProcessCommand
                         throw new EOFException( "stream closed" );
                     }
 
-                    throw new EOFException( format( "%s read %d out of %d bytes",
+                    throw new IOException( format( "%s read %d out of %d bytes",
                                                     MasterProcessCommand.class, total, dataLength ) );
                 }
 
@@ -151,6 +169,8 @@ public enum MasterProcessCommand
             {
                 case RUN_CLASS:
                     return new String( data, FORK_STREAM_CHARSET_NAME );
+                case SHUTDOWN:
+                    return StringUtils.decode( data, ASCII );
                 default:
                     return null;
             }
@@ -167,6 +187,8 @@ public enum MasterProcessCommand
         {
             case RUN_CLASS:
                 return encodeStringForForkCommunication( data );
+            case SHUTDOWN:
+                return StringUtils.encode( data, ASCII );
             default:
                 return new byte[0];
         }

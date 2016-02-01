@@ -45,7 +45,8 @@ import java.util.Map;
  */
 public class BaseProviderFactory
     implements DirectoryScannerParametersAware, ReporterConfigurationAware, SurefireClassLoadersAware, TestRequestAware,
-    ProviderPropertiesAware, ProviderParameters, TestArtifactInfoAware, RunOrderParametersAware
+    ProviderPropertiesAware, ProviderParameters, TestArtifactInfoAware, RunOrderParametersAware, MainCliOptionsAware,
+    FailFastAware, ShutdownAware
 {
     private static final int ROOT_CHANNEL = 0;
 
@@ -69,12 +70,17 @@ public class BaseProviderFactory
 
     private TestArtifactInfo testArtifactInfo;
 
+    private int skipAfterFailureCount;
+
+    private Shutdown shutdown;
+
     public BaseProviderFactory( ReporterFactory reporterFactory, boolean insideFork )
     {
         this.reporterFactory = reporterFactory;
         this.insideFork = insideFork;
     }
 
+    @Deprecated
     public DirectoryScanner getDirectoryScanner()
     {
         return directoryScannerParameters == null
@@ -188,5 +194,30 @@ public class BaseProviderFactory
     public void setMainCliOptions( List<CommandLineOption> mainCliOptions )
     {
         this.mainCliOptions = mainCliOptions == null ? Collections.<CommandLineOption>emptyList() : mainCliOptions;
+    }
+
+    public int getSkipAfterFailureCount()
+    {
+        return skipAfterFailureCount;
+    }
+
+    public void setSkipAfterFailureCount( int skipAfterFailureCount )
+    {
+        this.skipAfterFailureCount = skipAfterFailureCount;
+    }
+
+    public boolean isInsideFork()
+    {
+        return insideFork;
+    }
+
+    public Shutdown getShutdown()
+    {
+        return shutdown;
+    }
+
+    public void setShutdown( Shutdown shutdown )
+    {
+        this.shutdown = shutdown;
     }
 }

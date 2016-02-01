@@ -36,6 +36,8 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
+import static org.apache.maven.plugin.surefire.report.ConsoleReporter.PLAIN;
+
 /**
  * Provides reporting modules on the plugin side.
  * <p/>
@@ -46,7 +48,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class DefaultReporterFactory
     implements ReporterFactory
 {
-
     private RunStatistics globalStats = new RunStatistics();
 
     private final StartupReportConfiguration reportConfiguration;
@@ -72,7 +73,16 @@ public class DefaultReporterFactory
 
     public RunListener createReporter()
     {
-        return createTestSetRunListener();
+        TestSetRunListener testSetRunListener =
+            new TestSetRunListener( reportConfiguration.instantiateConsoleReporter(),
+                                    reportConfiguration.instantiateFileReporter(),
+                                    reportConfiguration.instantiateStatelessXmlReporter(),
+                                    reportConfiguration.instantiateConsoleOutputFileReporter(), statisticsReporter,
+                                    reportConfiguration.isTrimStackTrace(),
+                                    PLAIN.equals( reportConfiguration.getReportFormat() ),
+                                    reportConfiguration.isBriefOrPlainFormat() );
+        addListener( testSetRunListener );
+        return testSetRunListener;
     }
 
     public void mergeFromOtherFactories( Collection<DefaultReporterFactory> factories )
@@ -84,20 +94,6 @@ public class DefaultReporterFactory
                 listeners.add( listener );
             }
         }
-    }
-
-    public RunListener createTestSetRunListener()
-    {
-        TestSetRunListener testSetRunListener =
-            new TestSetRunListener( reportConfiguration.instantiateConsoleReporter(),
-                                    reportConfiguration.instantiateFileReporter(),
-                                    reportConfiguration.instantiateStatelessXmlReporter(),
-                                    reportConfiguration.instantiateConsoleOutputFileReporter(), statisticsReporter,
-                                    reportConfiguration.isTrimStackTrace(),
-                                    ConsoleReporter.PLAIN.equals( reportConfiguration.getReportFormat() ),
-                                    reportConfiguration.isBriefOrPlainFormat() );
-        addListener( testSetRunListener );
-        return testSetRunListener;
     }
 
     final void addListener( TestSetRunListener listener )
@@ -136,7 +132,7 @@ public class DefaultReporterFactory
         if ( reportConfiguration.isPrintSummary() )
         {
             logger.info( "" );
-            logger.info( "Results :" );
+            logger.info( "Results:" );
             logger.info( "" );
         }
         boolean printedFailures = printTestFailures( logger, TestResultType.failure );
@@ -156,6 +152,9 @@ public class DefaultReporterFactory
         return globalStats;
     }
 
+    /**
+     * For testing purposes only.
+     */
     public static DefaultReporterFactory defaultNoXml()
     {
         return new DefaultReporterFactory( StartupReportConfiguration.defaultNoXml() );
@@ -318,7 +317,6 @@ public class DefaultReporterFactory
     // Use default visibility for testing
     boolean printTestFailures( DefaultDirectConsoleReporter logger, TestResultType type )
     {
-        boolean printed = false;
         final Map<String, List<TestMethodStats>> testStats;
         switch ( type )
         {
@@ -332,9 +330,10 @@ public class DefaultReporterFactory
                 testStats = flakyTests;
                 break;
             default:
-                return printed;
+                return false;
         }
 
+        boolean printed = false;
         if ( !testStats.isEmpty() )
         {
             logger.info( type.getLogPrefix() );
@@ -372,7 +371,7 @@ public class DefaultReporterFactory
     }
 
     // Describe the result of a given test
-    static enum TestResultType
+    enum TestResultType
     {
 
         error( "Tests in error: " ),
@@ -384,7 +383,7 @@ public class DefaultReporterFactory
 
         private final String logPrefix;
 
-        private TestResultType( String logPrefix )
+        TestResultType( String logPrefix )
         {
             this.logPrefix = logPrefix;
         }

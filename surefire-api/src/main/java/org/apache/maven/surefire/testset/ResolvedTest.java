@@ -20,20 +20,26 @@ package org.apache.maven.surefire.testset;
  */
 
 import org.apache.maven.shared.utils.StringUtils;
-import org.apache.maven.shared.utils.io.MatchPatterns;
-import org.apache.maven.shared.utils.io.SelectorUtils;
 
-import java.io.File;
+import static java.io.File.separatorChar;
+import static org.apache.maven.shared.utils.StringUtils.isBlank;
+import static org.apache.maven.shared.utils.io.MatchPatterns.from;
+import static org.apache.maven.shared.utils.io.SelectorUtils.PATTERN_HANDLER_SUFFIX;
+import static org.apache.maven.shared.utils.io.SelectorUtils.REGEX_HANDLER_PREFIX;
+import static org.apache.maven.shared.utils.io.SelectorUtils.matchPath;
 
 /**
  * Single pattern test filter resolved from multi pattern filter -Dtest=MyTest#test,AnotherTest#otherTest.
+ * @deprecated will be renamed to ResolvedTestPattern
  */
+// will be renamed to ResolvedTestPattern
+@Deprecated
 public final class ResolvedTest
 {
     /**
      * Type of patterns in ResolvedTest constructor.
      */
-    public static enum Type
+    public enum Type
     {
         CLASS, METHOD
     }
@@ -107,7 +113,8 @@ public final class ResolvedTest
     }
 
     /**
-     * Test class file pattern, e.g. org&#47;**&#47;Cat*.class<br/>
+     * Test class file pattern, e.g. org&#47;**&#47;Cat*.class<br/>, or null if not any
+     * and {@link #hasTestClassPattern()} returns false.
      * Other examples: org&#47;animals&#47;Cat*, org&#47;animals&#47;Ca?.class, %regex[Cat.class|Dog.*]<br/>
      * <br/>
      * '*' means zero or more characters<br>
@@ -124,7 +131,7 @@ public final class ResolvedTest
     }
 
     /**
-     * Test method, e.g. "realTestMethod".<br/>
+     * Test method, e.g. "realTestMethod".<br/>, or null if not any and {@link #hasTestMethodPattern()} returns false.
      * Other examples: test* or testSomethin? or %regex[testOne|testTwo] or %ant[testOne|testTwo]<br/>
      * <br/>
      * '*' means zero or more characters<br>
@@ -155,35 +162,20 @@ public final class ResolvedTest
         return classPattern == null && methodPattern == null;
     }
 
-    public boolean shouldRun( String testClassFile, String methodName )
+    public boolean matchAsInclusive( String testClassFile, String methodName )
     {
-        if ( isEmpty() )
-        {
-            return true;
-        }
+        testClassFile = tryBlank( testClassFile );
+        methodName = tryBlank( methodName );
 
-        boolean matchedMethodPattern = false;
+        return isEmpty() || alwaysInclusiveQuietly( testClassFile ) || match( testClassFile, methodName );
+    }
 
-        if ( methodPattern != null && methodName != null )
-        {
-            if ( SelectorUtils.matchPath( methodPattern, methodName ) )
-            {
-                matchedMethodPattern = true;
-            }
-            else
-            {
-                return false;
-            }
-        }
+    public boolean matchAsExclusive( String testClassFile, String methodName )
+    {
+        testClassFile = tryBlank( testClassFile );
+        methodName = tryBlank( methodName );
 
-        if ( classPattern != null )
-        {
-            return isRegexTestClassPattern ? matchClassRegexPatter( testClassFile ) : matchClassPatter( testClassFile );
-        }
-        else
-        {
-            return matchedMethodPattern;
-        }
+        return !isEmpty() && canMatchExclusive( testClassFile, methodName ) && match( testClassFile, methodName );
     }
 
     @Override
@@ -215,7 +207,7 @@ public final class ResolvedTest
     @Override
     public String toString()
     {
-        return isEmpty() ? null : description;
+        return isEmpty() ? "" : description;
     }
 
     private static String description( String clazz, String method, boolean isRegex )
@@ -240,34 +232,86 @@ public final class ResolvedTest
         return isRegex && description != null ? wrapRegex( description ) : description;
     }
 
+    private boolean canMatchExclusive( String testClassFile, String methodName )
+    {
+        return canMatchExclusiveMethods( testClassFile, methodName )
+            || canMatchExclusiveClasses( testClassFile, methodName )
+            || canMatchExclusiveAll( testClassFile, methodName );
+    }
+
+    private boolean canMatchExclusiveMethods( String testClassFile, String methodName )
+    {
+        return testClassFile == null && methodName != null && classPattern == null && methodPattern != null;
+    }
+
+    private boolean canMatchExclusiveClasses( String testClassFile, String methodName )
+    {
+        return testClassFile != null && methodName == null && classPattern != null && methodPattern == null;
+    }
+
+    private boolean canMatchExclusiveAll( String testClassFile, String methodName )
+    {
+        return testClassFile != null && methodName != null && ( classPattern != null || methodPattern != null );
+    }
+
+    /**
+     * Prevents {@link #match(String, String)} from throwing NPE in situations when inclusive returns true.
+     */
+    private boolean alwaysInclusiveQuietly( String testClassFile )
+    {
+        return testClassFile == null && classPattern != null;
+    }
+
+    private boolean match( String testClassFile, String methodName )
+    {
+        return matchClass( testClassFile ) && matchMethod( methodName );
+    }
+
+    private boolean matchClass( String testClassFile )
+    {
+        return classPattern == null || matchTestClassFile( testClassFile );
+    }
+
+    private boolean matchMethod( String methodName )
+    {
+        return methodPattern == null || methodName == null || matchMethodName( methodName );
+    }
+
+    private boolean matchTestClassFile( String testClassFile )
+    {
+        return isRegexTestClassPattern ? matchClassRegexPatter( testClassFile ) : matchClassPatter( testClassFile );
+    }
+
+    private boolean matchMethodName( String methodName )
+    {
+        return matchPath( methodPattern, methodName );
+    }
+
     private boolean matchClassPatter( String testClassFile )
     {
         //@todo We have to use File.separator only because the MatchPatterns is using it internally - cannot override.
         String classPattern = this.classPattern;
-        if ( File.separatorChar != '/' )
+        if ( separatorChar != '/' )
         {
-            testClassFile = testClassFile.replace( '/', File.separatorChar );
-            classPattern = classPattern.replace( '/', File.separatorChar );
+            testClassFile = testClassFile.replace( '/', separatorChar );
+            classPattern = classPattern.replace( '/', separatorChar );
         }
 
         if ( classPattern.endsWith( WILDCARD_FILENAME_POSTFIX ) || classPattern.endsWith( CLASS_FILE_EXTENSION ) )
         {
-            return MatchPatterns.from( classPattern ).matches( testClassFile, true );
+            return from( classPattern ).matches( testClassFile, true );
         }
         else
         {
             String[] classPatterns = { classPattern + CLASS_FILE_EXTENSION, classPattern };
-            return MatchPatterns.from( classPatterns ).matches( testClassFile, true );
+            return from( classPatterns ).matches( testClassFile, true );
         }
     }
 
     private boolean matchClassRegexPatter( String testClassFile )
     {
-        if ( File.separatorChar != '/' )
-        {
-            testClassFile = testClassFile.replace( '/', File.separatorChar );
-        }
-        return MatchPatterns.from( classPattern ).matches( testClassFile, true );
+        String realFile = separatorChar == '/' ? testClassFile : testClassFile.replace( '/', separatorChar );
+        return from( classPattern ).matches( realFile, true );
     }
 
     private static String tryBlank( String s )
@@ -278,8 +322,8 @@ public final class ResolvedTest
         }
         else
         {
-            s = s.trim();
-            return StringUtils.isEmpty( s ) ? null : s;
+            String trimmed = s.trim();
+            return StringUtils.isEmpty( trimmed ) ? null : trimmed;
         }
     }
 
@@ -287,18 +331,23 @@ public final class ResolvedTest
     {
         if ( s != null && !isRegex )
         {
-            s = convertToPath( s );
-            if ( s != null && !s.startsWith( WILDCARD_PATH_PREFIX ) )
+            String path = convertToPath( s );
+            path = fromFullyQualifiedClass( path );
+            if ( path != null && !path.startsWith( WILDCARD_PATH_PREFIX ) )
             {
-                s = WILDCARD_PATH_PREFIX + s;
+                path = WILDCARD_PATH_PREFIX + path;
             }
+            return path;
         }
-        return s;
+        else
+        {
+            return s;
+        }
     }
 
     private static String convertToPath( String className )
     {
-        if ( StringUtils.isBlank( className ) )
+        if ( isBlank( className ) )
         {
             return null;
         }
@@ -315,6 +364,31 @@ public final class ResolvedTest
 
     static String wrapRegex( String unwrapped )
     {
-        return SelectorUtils.REGEX_HANDLER_PREFIX + unwrapped + SelectorUtils.PATTERN_HANDLER_SUFFIX;
+        return REGEX_HANDLER_PREFIX + unwrapped + PATTERN_HANDLER_SUFFIX;
+    }
+
+    static String fromFullyQualifiedClass( String cls )
+    {
+        if ( cls.endsWith( CLASS_FILE_EXTENSION ) )
+        {
+            String className = cls.substring( 0, cls.length() - CLASS_FILE_EXTENSION.length() );
+            return className.replace( '.', '/' ) + CLASS_FILE_EXTENSION;
+        }
+        else if ( !cls.contains( "/" ) )
+        {
+            if ( cls.endsWith( WILDCARD_FILENAME_POSTFIX ) )
+            {
+                String clsName = cls.substring( 0, cls.length() - WILDCARD_FILENAME_POSTFIX.length() );
+                return clsName.contains( "." ) ? clsName.replace( '.', '/' ) + WILDCARD_FILENAME_POSTFIX : cls;
+            }
+            else
+            {
+                return cls.replace( '.', '/' );
+            }
+        }
+        else
+        {
+            return cls;
+        }
     }
 }

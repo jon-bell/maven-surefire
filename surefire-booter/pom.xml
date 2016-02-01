@@ -23,13 +23,13 @@
   <parent>
     <groupId>org.apache.maven.surefire</groupId>
     <artifactId>surefire</artifactId>
-    <version>2.19-SNAPSHOT</version>
-    <relativePath>../pom.xml</relativePath>
+    <version>2.19.2-SNAPSHOT</version>
   </parent>
 
   <artifactId>surefire-booter</artifactId>
 
   <name>SureFire Booter</name>
+  <description>API and Facilities used by forked tests running in JVM sub-process.</description>
 
   <dependencies>
     <dependency>

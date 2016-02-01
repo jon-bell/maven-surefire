@@ -23,9 +23,11 @@ import org.apache.maven.surefire.booter.ProviderParameterNames;
 import org.apache.maven.surefire.cli.CommandLineOption;
 import org.apache.maven.surefire.report.RunListener;
 import org.apache.maven.surefire.testng.conf.Configurator;
+import org.apache.maven.surefire.testng.utils.FailFastEventsSingleton;
+import org.apache.maven.surefire.testng.utils.FailFastListener;
+import org.apache.maven.surefire.testng.utils.Stoppable;
 import org.apache.maven.surefire.testset.TestListResolver;
 import org.apache.maven.surefire.testset.TestSetFailedException;
-import org.apache.maven.surefire.util.ReflectionUtils;
 import org.apache.maven.surefire.util.internal.StringUtils;
 import org.testng.TestNG;
 import org.testng.annotations.Test;
@@ -43,6 +45,11 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.apache.maven.surefire.util.ReflectionUtils.instantiate;
+import static org.apache.maven.surefire.util.ReflectionUtils.tryLoadClass;
+import static org.apache.maven.surefire.util.internal.ConcurrencyUtils.countDownToZero;
 
 /**
  * Contains utility methods for executing TestNG.
@@ -50,26 +57,28 @@ import java.util.Map;
  * @author <a href="mailto:brett@apache.org">Brett Porter</a>
  * @author <a href='mailto:the[dot]mindstorm[at]gmail[dot]com'>Alex Popescu</a>
  */
-public class TestNGExecutor
+final class TestNGExecutor
 {
     /** The default name for a suite launched from the maven surefire plugin */
-    public static final String DEFAULT_SUREFIRE_SUITE_NAME = "Surefire suite";
+    private static final String DEFAULT_SUREFIRE_SUITE_NAME = "Surefire suite";
 
     /** The default name for a test launched from the maven surefire plugin */
-    public static final String DEFAULT_SUREFIRE_TEST_NAME = "Surefire test";
+    private static final String DEFAULT_SUREFIRE_TEST_NAME = "Surefire test";
 
     private static final boolean HAS_TEST_ANNOTATION_ON_CLASSPATH =
-        null != ReflectionUtils.tryLoadClass( TestNGExecutor.class.getClassLoader(), "org.testng.annotations.Test" );
+            tryLoadClass( TestNGExecutor.class.getClassLoader(), "org.testng.annotations.Test" ) != null;
 
     private TestNGExecutor()
     {
-        // noop
+        throw new IllegalStateException( "not instantiable constructor" );
     }
 
-    public static void run( Class<?>[] testClasses, String testSourceDirectory,
+    @SuppressWarnings( "checkstyle:parameternumbercheck" )
+    static void run( Iterable<Class<?>> testClasses, String testSourceDirectory,
                             Map<String, String> options, // string,string because TestNGMapConfigurator#configure()
-                            RunListener reportManager, TestNgTestSuite suite, File reportsDirectory,
-                            TestListResolver methodFilter, List<CommandLineOption> mainCliOptions )
+                            RunListener reportManager, File reportsDirectory,
+                            TestListResolver methodFilter, List<CommandLineOption> mainCliOptions,
+                            int skipAfterFailureCount )
         throws TestSetFailedException
     {
         TestNG testng = new TestNG( true );
@@ -119,7 +128,8 @@ public class TestNGExecutor
 
         testng.setXmlSuites( xmlSuites );
         configurator.configure( testng, options );
-        postConfigure( testng, testSourceDirectory, reportManager, suite, reportsDirectory );
+        postConfigure( testng, testSourceDirectory, reportManager, reportsDirectory, skipAfterFailureCount,
+                       extractVerboseLevel( options ) );
         testng.run();
     }
 
@@ -258,15 +268,16 @@ public class TestNGExecutor
         return xms;
     }
 
-    public static void run( List<String> suiteFiles, String testSourceDirectory,
+    static void run( List<String> suiteFiles, String testSourceDirectory,
                             Map<String, String> options, // string,string because TestNGMapConfigurator#configure()
-                            RunListener reportManager, TestNgTestSuite suite, File reportsDirectory )
+                            RunListener reportManager, File reportsDirectory, int skipAfterFailureCount )
         throws TestSetFailedException
     {
         TestNG testng = new TestNG( true );
         Configurator configurator = getConfigurator( options.get( "testng.configurator" ) );
         configurator.configure( testng, options );
-        postConfigure( testng, testSourceDirectory, reportManager, suite, reportsDirectory );
+        postConfigure( testng, testSourceDirectory, reportManager, reportsDirectory, skipAfterFailureCount,
+                       extractVerboseLevel( options ) );
         testng.setTestSuites( suiteFiles );
         testng.run();
     }
@@ -291,17 +302,24 @@ public class TestNGExecutor
         }
     }
 
-    private static void postConfigure( TestNG testNG, String sourcePath, RunListener reportManager,
-                                       TestNgTestSuite suite, File reportsDirectory )
-        throws TestSetFailedException
+    private static void postConfigure( TestNG testNG, String sourcePath, final RunListener reportManager,
+                                       File reportsDirectory, int skipAfterFailureCount, int verboseLevel )
     {
-        // turn off all TestNG output
-        testNG.setVerbose( 0 );
+        // 0 (default): turn off all TestNG output
+        testNG.setVerbose( verboseLevel );
 
-        TestNGReporter reporter = createTestNGReporter( reportManager, suite );
+        TestNGReporter reporter = createTestNGReporter( reportManager );
         testNG.addListener( (Object) reporter );
 
-        // FIXME: use classifier to decide if we need to pass along the source dir (onyl for JDK14)
+        if ( skipAfterFailureCount > 0 )
+        {
+            ClassLoader cl = Thread.currentThread().getContextClassLoader();
+            testNG.addListener( instantiate( cl, "org.apache.maven.surefire.testng.utils.FailFastNotifier",
+                                             Object.class ) );
+            testNG.addListener( new FailFastListener( createStoppable( reportManager, skipAfterFailureCount ) ) );
+        }
+
+        // FIXME: use classifier to decide if we need to pass along the source dir (only for JDK14)
         if ( sourcePath != null )
         {
             testNG.setSourcePath( sourcePath );
@@ -310,17 +328,34 @@ public class TestNGExecutor
         testNG.setOutputDirectory( reportsDirectory.getAbsolutePath() );
     }
 
+    private static Stoppable createStoppable( final RunListener reportManager, int skipAfterFailureCount )
+    {
+        final AtomicInteger currentFaultCount = new AtomicInteger( skipAfterFailureCount );
+
+        return new Stoppable()
+        {
+            public void fireStopEvent()
+            {
+                if ( countDownToZero( currentFaultCount ) )
+                {
+                    FailFastEventsSingleton.getInstance().setSkipOnNextTest();
+                }
+
+                reportManager.testExecutionSkippedByUser();
+            }
+        };
+    }
+
     // If we have access to IResultListener, return a ConfigurationAwareTestNGReporter
     // But don't cause NoClassDefFoundErrors if it isn't available; just return a regular TestNGReporter instead
-    private static TestNGReporter createTestNGReporter( RunListener reportManager, TestNgTestSuite suite )
+    private static TestNGReporter createTestNGReporter( RunListener reportManager )
     {
         try
         {
             Class.forName( "org.testng.internal.IResultListener" );
             Class c = Class.forName( "org.apache.maven.surefire.testng.ConfigurationAwareTestNGReporter" );
-            @SuppressWarnings( "unchecked" ) Constructor<?> ctor =
-                    c.getConstructor( RunListener.class, TestNgTestSuite.class );
-            return (TestNGReporter) ctor.newInstance( reportManager, suite );
+            @SuppressWarnings( "unchecked" ) Constructor<?> ctor = c.getConstructor( RunListener.class );
+            return (TestNGReporter) ctor.newInstance( reportManager );
         }
         catch ( InvocationTargetException e )
         {
@@ -336,4 +371,18 @@ public class TestNGExecutor
         }
     }
 
+    private static int extractVerboseLevel( Map<String, String> options )
+        throws TestSetFailedException
+    {
+        try
+        {
+            String verbose = options.get( "surefire.testng.verbose" );
+            return verbose == null ? 0 : Integer.parseInt( verbose );
+        }
+        catch ( NumberFormatException e )
+        {
+            throw new TestSetFailedException( "Provider property 'surefire.testng.verbose' should refer to "
+                                                  + "number -1 (debug mode), 0, 1 .. 10 (most detailed).", e );
+        }
+    }
 }

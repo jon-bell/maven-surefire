@@ -31,6 +31,8 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 
+import static java.io.File.pathSeparatorChar;
+
 /**
  * An ordered list of classpath elements with set behaviour
  *
@@ -42,7 +44,6 @@ import java.util.List;
  */
 public class Classpath implements Iterable<String>
 {
-
     private final List<String> unmodifiableElements;
 
     public static Classpath join( Classpath firstClasspath, Classpath secondClasspath )
@@ -111,6 +112,11 @@ public class Classpath implements Iterable<String>
         return unmodifiableElements;
     }
 
+    /**
+     * @deprecated this should be package private method which returns List of Files. It will be
+     * removed in the next major version.
+     */
+    @Deprecated
     public List<URL> getAsUrlList()
         throws MalformedURLException
     {
@@ -128,7 +134,8 @@ public class Classpath implements Iterable<String>
         StringBuilder sb = new StringBuilder();
         for ( String element : unmodifiableElements )
         {
-            sb.append( element ).append( File.pathSeparatorChar );
+            sb.append( element )
+              .append( pathSeparatorChar );
         }
         System.setProperty( propertyName, sb.toString() );
     }
@@ -155,11 +162,9 @@ public class Classpath implements Iterable<String>
     {
         try
         {
-            List urls = getAsUrlList();
             IsolatedClassLoader classLoader = new IsolatedClassLoader( parent, childDelegation, roleName );
-            for ( Object url1 : urls )
+            for ( URL url : getAsUrlList() )
             {
-                URL url = (URL) url1;
                 classLoader.addURL( url );
             }
             if ( parent != null )

@@ -29,8 +29,6 @@ import java.io.IOException;
 import static org.apache.maven.surefire.booter.MasterProcessCommand.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
-import static org.junit.Assert.*;
-import static org.junit.Assert.assertNotNull;
 
 /**
  * @author <a href="mailto:tibordigana@apache.org">Tibor Digana (tibor17)</a>
@@ -98,7 +96,7 @@ public class MasterProcessCommandTest
                     decoded = command.toDataTypeAsString( encoded );
                     assertNull( decoded );
                     break;
-                case STOP_ON_NEXT_TEST:
+                case SKIP_SINCE_NEXT_TEST:
                     assertEquals( Void.class, command.getDataType() );
                     encoded = command.fromDataType( dummyData );
                     assertThat( encoded.length, is( 0 ) );
@@ -106,11 +104,11 @@ public class MasterProcessCommandTest
                     assertNull( decoded );
                     break;
                 case SHUTDOWN:
-                    assertEquals( Void.class, command.getDataType() );
-                    encoded = command.fromDataType( dummyData );
-                    assertThat( encoded.length, is( 0 ) );
+                    assertEquals( String.class, command.getDataType() );
+                    encoded = command.fromDataType( Shutdown.EXIT.name() );
+                    assertThat( encoded.length, is( 4 ) );
                     decoded = command.toDataTypeAsString( encoded );
-                    assertNull( decoded );
+                    assertThat( decoded, is( Shutdown.EXIT.name() ) );
                     break;
                 case NOOP:
                     assertEquals( Void.class, command.getDataType() );

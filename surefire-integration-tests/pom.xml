@@ -24,13 +24,13 @@
   <parent>
     <groupId>org.apache.maven.surefire</groupId>
     <artifactId>surefire</artifactId>
-    <version>2.19-SNAPSHOT</version>
-    <relativePath>../pom.xml</relativePath>
+    <version>2.19.2-SNAPSHOT</version>
   </parent>
 
   <artifactId>surefire-integration-tests</artifactId>
 
   <name>Maven Surefire Integration Tests</name>
+  <description>Used internally testing MOJOs. The project is not deployed.</description>
 
   <properties>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -90,10 +90,11 @@
         <artifactId>maven-failsafe-plugin</artifactId>
         <version>2.12.4</version> <!-- ${shadedVersion}, but resolved due to http://jira.codehaus.org/browse/MRELEASE-799 -->
         <configuration>
+          <runOrder>alphabetical</runOrder>
           <threadCount>1</threadCount>
           <perCoreThreadCount>false</perCoreThreadCount>
           <forkMode>never</forkMode>
-          <argLine>-Xmx512m -XX:MaxPermSize=356m</argLine>
+          <argLine>${argLine}</argLine>
           <includes>
             <include>org/apache/**/*IT*.java</include>
           </includes>
@@ -120,7 +121,6 @@
             <version>2.12.4</version> <!-- ${shadedVersion}, but resolved due to http://jira.codehaus.org/browse/MRELEASE-799 -->
           </dependency>
         </dependencies>
-
         <executions>
           <execution>
             <goals>
@@ -150,6 +150,19 @@
         </executions>
       </plugin>
       <plugin>
+        <artifactId>maven-jar-plugin</artifactId>
+        <!-- todo dont skip since of failsafe:2.19 internal use if having src/main/java/... -->
+        <configuration>
+          <skip>true</skip>
+        </configuration>
+      </plugin>
+      <plugin>
+        <artifactId>maven-install-plugin</artifactId>
+        <configuration>
+          <skip>true</skip>
+        </configuration>
+      </plugin>
+      <plugin>
         <artifactId>maven-deploy-plugin</artifactId>
         <configuration>
           <skip>true</skip>
@@ -171,21 +184,12 @@
             <configuration>
               <parallel>classes</parallel>
               <threadCount>${surefire.threadcount}</threadCount>
-              <argLine>-Xmx2512m -XX:MaxPermSize=256m</argLine>
+              <argLine>${argLine} -Xmx512m -XX:MaxPermSize=356m</argLine>
             </configuration>
           </plugin>
         </plugins>
       </build>
-      <dependencies>
-        <dependency>
-          <groupId>junit</groupId>
-          <artifactId>junit</artifactId>
-          <version>4.8.2</version>
-          <scope>test</scope>
-        </dependency>
-      </dependencies>
     </profile>
-
     <profile>
       <id>embedded</id>
       <activation>
@@ -198,7 +202,6 @@
         <verifier.forkMode>auto</verifier.forkMode>
       </properties>
     </profile>
-
     <profile>
       <id>maven-2.2.1</id>
       <properties>
@@ -243,6 +246,36 @@
         </plugins>
       </build>
     </profile>
-
+    <profile>
+      <id>jenkins</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.jacoco</groupId>
+            <artifactId>jacoco-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>jacoco-agent</id>
+                <goals>
+                  <goal>prepare-agent</goal>
+                </goals>
+                <configuration>
+                  <skip>true</skip>
+                </configuration>
+              </execution>
+              <execution>
+                <id>jacoco-agent-it</id>
+                <goals>
+                  <goal>prepare-agent-integration</goal>
+                </goals>
+                <configuration>
+                  <propertyName>argLine</propertyName>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 </project>
