@@ -2484,6 +2484,8 @@ public abstract class AbstractSurefireMojo
         {
             final Map<String, Artifact> pluginArtifactMap = getPluginArtifactMap();
             Artifact plugin = pluginArtifactMap.get( "org.apache.maven.plugins:maven-surefire-plugin" );
+            if(plugin == null)
+            	plugin = pluginArtifactMap.get( "org.apache.maven.plugins:maven-failsafe-plugin" );
             return dependencyResolver.addProviderToClasspath( pluginArtifactMap, plugin );
         }
 
