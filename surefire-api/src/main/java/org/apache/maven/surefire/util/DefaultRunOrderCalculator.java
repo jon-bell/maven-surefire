@@ -58,6 +58,7 @@ public class DefaultRunOrderCalculator
         this.randomSeed = ( randomSeed == null ? System.currentTimeMillis() : Long.valueOf( randomSeed ) );
     }
 
+    @Override
     @SuppressWarnings( "checkstyle:magicnumber" )
     public TestsToRun orderTestClasses( TestsToRun scannedClasses )
     {
@@ -126,6 +127,7 @@ public class DefaultRunOrderCalculator
     {
         return new Comparator<Class>()
         {
+            @Override
             public int compare( Class o1, Class o2 )
             {
                 return o2.getName().compareTo( o1.getName() );
@@ -137,6 +139,7 @@ public class DefaultRunOrderCalculator
     {
         return new Comparator<Class>()
         {
+            @Override
             public int compare( Class o1, Class o2 )
             {
                 return o1.getName().compareTo( o2.getName() );

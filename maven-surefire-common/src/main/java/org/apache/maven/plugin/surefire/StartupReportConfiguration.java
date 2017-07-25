@@ -19,15 +19,7 @@ package org.apache.maven.plugin.surefire;
  * under the License.
  */
 
-import java.io.File;
-import java.io.PrintStream;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
-import java.util.concurrent.ConcurrentHashMap;
-
 import org.apache.maven.plugin.surefire.report.ConsoleOutputFileReporter;
-import org.apache.maven.plugin.surefire.report.ConsoleReporter;
 import org.apache.maven.plugin.surefire.report.DirectConsoleOutput;
 import org.apache.maven.plugin.surefire.report.FileReporter;
 import org.apache.maven.plugin.surefire.report.StatelessXmlReporter;
@@ -36,18 +28,26 @@ import org.apache.maven.plugin.surefire.report.WrappedReportEntry;
 import org.apache.maven.plugin.surefire.runorder.StatisticsReporter;
 
 import javax.annotation.Nonnull;
+import java.io.File;
+import java.io.PrintStream;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+import static org.apache.maven.plugin.surefire.report.ConsoleReporter.BRIEF;
+import static org.apache.maven.plugin.surefire.report.ConsoleReporter.PLAIN;
 
 /**
  * All the parameters used to construct reporters
- * <p/>
+ * <br>
  *
  * @author Kristian Rosenvold
  */
-public class StartupReportConfiguration
+public final class StartupReportConfiguration
 {
-    public static final String BRIEF_REPORT_FORMAT = ConsoleReporter.BRIEF;
+    public static final String BRIEF_REPORT_FORMAT = BRIEF;
 
-    public static final String PLAIN_REPORT_FORMAT = ConsoleReporter.PLAIN;
+    public static final String PLAIN_REPORT_FORMAT = PLAIN;
 
     private final PrintStream originalSystemOut;
 
@@ -61,7 +61,7 @@ public class StartupReportConfiguration
 
     private final String reportNameSuffix;
 
-    private final String configurationHash;
+    private final File statisticsFile;
 
     private final boolean requiresRunHistory;
 
@@ -75,18 +75,18 @@ public class StartupReportConfiguration
 
     private final int rerunFailingTestsCount;
 
-    private String xsdSchemaLocation;
-
-    private final Properties testVmSystemProperties = new Properties();
+    private final String xsdSchemaLocation;
 
     private final Map<String, Map<String, List<WrappedReportEntry>>> testClassMethodRunHistory
         = new ConcurrentHashMap<String, Map<String, List<WrappedReportEntry>>>();
+
+    private StatisticsReporter statisticsReporter;
 
     @SuppressWarnings( "checkstyle:parameternumber" )
     public StartupReportConfiguration( boolean useFile, boolean printSummary, String reportFormat,
                                        boolean redirectTestOutputToFile, boolean disableXmlReport,
                                        @Nonnull File reportsDirectory, boolean trimStackTrace, String reportNameSuffix,
-                                       String configurationHash, boolean requiresRunHistory,
+                                       File statisticsFile, boolean requiresRunHistory,
                                        int rerunFailingTestsCount, String xsdSchemaLocation )
     {
         this.useFile = useFile;
@@ -97,7 +97,7 @@ public class StartupReportConfiguration
         this.reportsDirectory = reportsDirectory;
         this.trimStackTrace = trimStackTrace;
         this.reportNameSuffix = reportNameSuffix;
-        this.configurationHash = configurationHash;
+        this.statisticsFile = statisticsFile;
         this.requiresRunHistory = requiresRunHistory;
         this.originalSystemOut = System.out;
         this.originalSystemErr = System.err;
@@ -107,21 +107,27 @@ public class StartupReportConfiguration
 
     /**
      * For testing purposes only.
+     *
+     * @return StartupReportConfiguration fo testing purposes
      */
     public static StartupReportConfiguration defaultValue()
     {
         File target = new File( "./target" );
-        return new StartupReportConfiguration( true, true, "PLAIN", false, false, target, false, null, "TESTHASH",
+        File statisticsFile = new File( target, "TESTHASH" );
+        return new StartupReportConfiguration( true, true, "PLAIN", false, false, target, false, null, statisticsFile,
                                                false, 0, null );
     }
 
     /**
      * For testing purposes only.
+     *
+     * @return StartupReportConfiguration fo testing purposes
      */
     public static StartupReportConfiguration defaultNoXml()
     {
         File target = new File( "./target" );
-        return new StartupReportConfiguration( true, true, "PLAIN", false, true, target, false, null, "TESTHASHxXML",
+        File statisticsFile = new File( target, "TESTHASHxXML" );
+        return new StartupReportConfiguration( true, true, "PLAIN", false, true, target, false, null, statisticsFile,
                                                false, 0, null );
     }
 
@@ -186,16 +192,6 @@ public class StartupReportConfiguration
         return BRIEF_REPORT_FORMAT.equals( fmt ) || PLAIN_REPORT_FORMAT.equals( fmt );
     }
 
-    public ConsoleReporter instantiateConsoleReporter()
-    {
-        return shouldReportToConsole() ? new ConsoleReporter( originalSystemOut ) : null;
-    }
-
-    private boolean shouldReportToConsole()
-    {
-        return isUseFile() ? isPrintSummary() : isRedirectTestOutputToFile() || isBriefOrPlainFormat();
-    }
-
     public TestcycleConsoleOutputReceiver instantiateConsoleOutputFileReporter()
     {
         return isRedirectTestOutputToFile()
@@ -203,29 +199,23 @@ public class StartupReportConfiguration
             : new DirectConsoleOutput( originalSystemOut, originalSystemErr );
     }
 
-    public StatisticsReporter instantiateStatisticsReporter()
+    public synchronized StatisticsReporter getStatisticsReporter()
     {
-        return requiresRunHistory ? new StatisticsReporter( getStatisticsFile() ) : null;
+        if ( statisticsReporter == null )
+        {
+            statisticsReporter = requiresRunHistory ? new StatisticsReporter( getStatisticsFile() ) : null;
+        }
+        return statisticsReporter;
     }
 
     public File getStatisticsFile()
     {
-        return new File( reportsDirectory.getParentFile().getParentFile(), ".surefire-" + this.configurationHash );
-    }
-
-    public Properties getTestVmSystemProperties()
-    {
-        return testVmSystemProperties;
+        return statisticsFile;
     }
 
     public boolean isTrimStackTrace()
     {
         return trimStackTrace;
-    }
-
-    public String getConfigurationHash()
-    {
-        return configurationHash;
     }
 
     public boolean isRequiresRunHistory()
