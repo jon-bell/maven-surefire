@@ -2751,7 +2751,16 @@ public abstract class AbstractSurefireMojo
             throws ArtifactResolutionException, ArtifactNotFoundException
         {
             final Map<String, Artifact> pluginArtifactMap = getPluginArtifactMap();
-            Artifact plugin = pluginArtifactMap.get( "org.apache.maven.plugins:maven-surefire-plugin" );
+            Class<?> c = AbstractSurefireMojo.this.getClass();
+            Artifact plugin;
+            if ( c.getName().equals( "org.apache.maven.plugin.failsafe.IntegrationTestMojo" ) )
+            {
+                plugin = pluginArtifactMap.get( "org.apache.maven.plugins:maven-failsafe-plugin" );
+            }
+            else
+            {
+                plugin = pluginArtifactMap.get( "org.apache.maven.plugins:maven-surefire-plugin" );
+            }
             return dependencyResolver.addProviderToClasspath( pluginArtifactMap, plugin );
         }
     }
