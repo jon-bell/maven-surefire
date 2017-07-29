@@ -19,59 +19,91 @@ package org.apache.maven.surefire.booter;
  * under the License.
  */
 
+import static org.apache.maven.surefire.util.internal.ObjectUtils.requireNonNull;
+
 /**
- * PID, PPID, elapsed time (Unix) or start time (Windows).
+ * Immutable object which encapsulates PID and elapsed time (Unix) or start time (Windows).
+ * <br>
+ * Methods
+ * ({@link #getPID()}, {@link #getTime()}, {@link #isTimeAfter(ProcessInfo)}, {@link #isTimeEqualTo(ProcessInfo)})
+ * throw {@link IllegalStateException}
+ * if {@link #isValid()} returns {@code false} or {@link #isError()} returns {@code true}.
  *
  * @author <a href="mailto:tibordigana@apache.org">Tibor Digana (tibor17)</a>
  * @since 2.20.1
  */
 final class ProcessInfo
 {
-    static final ProcessInfo INVALID_PROCESS_INFO = new ProcessInfo( null, null, null );
+    static final ProcessInfo INVALID_PROCESS_INFO = new ProcessInfo( null, null );
+    static final ProcessInfo ERR_PROCESS_INFO = new ProcessInfo( null, null );
 
     /**
      * On Unix we do not get PID due to the command is interested only to etime of PPID:
      * <br>
-     * <pre>/bin/ps -o etime= -p $PPID</pre>
+     * <pre>/bin/ps -o etime= -p 123</pre>
      */
-    static ProcessInfo unixProcessInfo( long etime )
+    static ProcessInfo unixProcessInfo( long pid, long etime )
     {
-        return new ProcessInfo( "pid not needed on Unix", etime, null );
+        return new ProcessInfo( pid, etime );
     }
 
-    static ProcessInfo windowsProcessInfo( String pid, String startTimestamp, String ppid )
+    static ProcessInfo windowsProcessInfo( long pid, String startTimestamp )
     {
-        return new ProcessInfo( pid, startTimestamp, ppid );
+        return new ProcessInfo( pid, requireNonNull( startTimestamp, "startTimestamp is NULL" ) );
     }
 
-    private final String pid;
+    private final Long pid;
     private final Comparable time;
-    private final String ppid;
 
-    private ProcessInfo( String pid, Comparable time, String ppid )
+    private ProcessInfo( Long pid, Comparable time )
     {
         this.pid = pid;
         this.time = time;
-        this.ppid = ppid;
     }
 
     boolean isValid()
     {
-        return pid != null && time != null;
+        return this != INVALID_PROCESS_INFO;
     }
 
-    String getPID()
+    boolean isError()
     {
+        return this == ERR_PROCESS_INFO;
+    }
+
+    long getPID()
+    {
+        checkValid();
         return pid;
     }
 
     Comparable getTime()
     {
+        checkValid();
         return time;
     }
 
-    String getPPID()
+    @SuppressWarnings( "unchecked" )
+    boolean isTimeEqualTo( ProcessInfo that )
     {
-        return ppid;
+        checkValid();
+        that.checkValid();
+        return this.time.compareTo( that.time ) == 0;
+    }
+
+    @SuppressWarnings( "unchecked" )
+    boolean isTimeAfter( ProcessInfo that )
+    {
+        checkValid();
+        that.checkValid();
+        return this.time.compareTo( that.time ) > 0;
+    }
+
+    private void checkValid()
+    {
+        if ( !isValid() || isError() )
+        {
+            throw new IllegalStateException( "invalid process info" );
+        }
     }
 }

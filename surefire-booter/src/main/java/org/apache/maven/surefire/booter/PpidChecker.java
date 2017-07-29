@@ -19,115 +19,101 @@ package org.apache.maven.surefire.booter;
  * under the License.
  */
 
-import org.apache.maven.shared.utils.cli.CommandLineException;
-import org.apache.maven.shared.utils.cli.Commandline;
-import org.apache.maven.shared.utils.cli.StreamConsumer;
-
 import java.io.File;
-import java.lang.management.ManagementFactory;
-import java.util.Locale;
+import java.io.IOException;
+import java.util.Queue;
+import java.util.Scanner;
 import java.util.StringTokenizer;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static java.lang.Character.isDigit;
 import static java.lang.Long.parseLong;
 import static java.util.concurrent.TimeUnit.DAYS;
 import static java.util.concurrent.TimeUnit.HOURS;
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.regex.Pattern.compile;
+import static org.apache.commons.io.IOUtils.closeQuietly;
 import static org.apache.commons.lang3.SystemUtils.IS_OS_UNIX;
 import static org.apache.commons.lang3.SystemUtils.IS_OS_WINDOWS;
-import static org.apache.maven.shared.utils.cli.CommandLineUtils.executeCommandLine;
+import static org.apache.maven.surefire.booter.ProcessInfo.ERR_PROCESS_INFO;
 import static org.apache.maven.surefire.booter.ProcessInfo.INVALID_PROCESS_INFO;
 
 /**
- * Recognizes PPID. Determines lifetime of parent process.
+ * Recognizes PID of Plugin process and determines lifetime.
  *
  * @author <a href="mailto:tibordigana@apache.org">Tibor Digana (tibor17)</a>
  * @since 2.20.1
  */
 final class PpidChecker
 {
-    private static final String WMIC_CL = "CommandLine";
-
-    private static final String WMIC_PID = "ProcessId";
-
-    private static final String WMIC_PPID = "ParentProcessId";
-
     private static final String WMIC_CREATION_DATE = "CreationDate";
 
-    private static final String WINDOWS_CMD =
-            "wmic process where (ProcessId=%s) get " + WMIC_CREATION_DATE + "," + WMIC_PPID;
-
-    private static final String[] WINDOWS_PID_CMD =
-            { "wmic", "process", "where", "(Name='java.exe')", "get", WMIC_PID, ",", WMIC_CL };
-
-    private static final String UNIX_CMD1 = "/usr/bin/ps -o etime= -p $PPID";
-
-    private static final String UNIX_CMD2 = "/bin/ps -o etime= -p $PPID";
+    private final Queue<Process> destroyableCommands = new ConcurrentLinkedQueue<Process>();
 
     /**
-     * etime is in the form of [[dd-]hh:]mm:ss
+     * The etime is in the form of [[dd-]hh:]mm:ss on Unix like systems.
      */
     static final Pattern UNIX_CMD_OUT_PATTERN = compile( "^(((\\d+)-)?(\\d{2}):)?(\\d{2}):(\\d{2})$" );
 
-    private static final Pattern NUMBER_PATTERN = compile( "^\\d+$" );
+    private final long pluginPid;
 
-    static volatile String uniqueCommandLineToken;
+    private volatile ProcessInfo pluginProcessInfo;
+    private volatile boolean stopped;
 
-    private final ProcessInfo parentProcessInfo;
-
-    PpidChecker()
+    PpidChecker( long pluginPid )
     {
-        ProcessInfo parentProcess = INVALID_PROCESS_INFO;
-        if ( IS_OS_WINDOWS )
-        {
-            String pid = pid();
-            if ( pid == null && uniqueCommandLineToken != null )
-            {
-                pid = pidOnWindows();
-            }
-
-            if ( pid != null )
-            {
-                ProcessInfo currentProcessInfo = windows( pid );
-                String ppid = currentProcessInfo.getPPID();
-                parentProcess = currentProcessInfo.isValid() ? windows( ppid ) : INVALID_PROCESS_INFO;
-            }
-        }
-        else if ( IS_OS_UNIX )
-        {
-            parentProcess = unix();
-        }
-        parentProcessInfo = parentProcess.isValid() ? parentProcess : INVALID_PROCESS_INFO;
+        this.pluginPid = pluginPid;
     }
 
     boolean canUse()
     {
-        return parentProcessInfo.isValid();
+        return pluginProcessInfo == null
+                       ? IS_OS_WINDOWS || IS_OS_UNIX
+                       : pluginProcessInfo.isValid() && !pluginProcessInfo.isError();
     }
 
+    /**
+     * This method can be called only after {@link #canUse()} has returned {@code true}.
+     *
+     * @return {@code true} if parent process is alive; {@code false} otherwise
+     * @throws IllegalStateException if {@link #canUse()} returns {@code false}
+     *                               or the object has been {@link #destroyActiveCommands() destroyed}
+     */
     @SuppressWarnings( "unchecked" )
-    boolean isParentProcessAlive()
+    boolean isProcessAlive()
     {
         if ( !canUse() )
         {
-            throw new IllegalStateException();
+            throw new IllegalStateException( "irrelevant to call isProcessAlive()" );
         }
 
         if ( IS_OS_WINDOWS )
         {
-            ProcessInfo pp = windows( parentProcessInfo.getPID() );
-            // let's compare creation time, should be same unless killed or PPID is reused by OS into another process
-            return pp.isValid() && pp.getTime().compareTo( parentProcessInfo.getTime() ) == 0;
+            ProcessInfo previousPluginProcessInfo = pluginProcessInfo;
+            pluginProcessInfo = windows();
+            if ( isStopped() || pluginProcessInfo.isError() )
+            {
+                throw new IllegalStateException( "error to read process" );
+            }
+            // let's compare creation time, should be same unless killed or PID is reused by OS into another process
+            return pluginProcessInfo.isValid()
+                           && ( previousPluginProcessInfo == null
+                                        || pluginProcessInfo.isTimeEqualTo( previousPluginProcessInfo ) );
         }
         else if ( IS_OS_UNIX )
         {
-            ProcessInfo pp = unix();
+            ProcessInfo previousPluginProcessInfo = pluginProcessInfo;
+            pluginProcessInfo = unix();
+            if ( isStopped() || pluginProcessInfo.isError() )
+            {
+                throw new IllegalStateException( "error to read process" );
+            }
             // let's compare elapsed time, should be greater or equal if parent process is the same and still alive
-            return pp.isValid() && pp.getTime().compareTo( parentProcessInfo.getTime() ) >= 0;
+            return pluginProcessInfo.isValid()
+                           && ( previousPluginProcessInfo == null
+                                        || pluginProcessInfo.isTimeEqualTo( previousPluginProcessInfo )
+                                        || pluginProcessInfo.isTimeAfter( previousPluginProcessInfo ) );
         }
 
         throw new IllegalStateException();
@@ -140,184 +126,83 @@ final class PpidChecker
     // etimes elapsed time since the process was started, in seconds.
 
     // http://hg.openjdk.java.net/jdk7/jdk7/jdk/file/9b8c96f96a0f/test/java/lang/ProcessBuilder/Basic.java#L167
-    static ProcessInfo unix()
+    ProcessInfo unix()
     {
-        Commandline cli = new Commandline();
-        cli.getShell().setQuotedArgumentsEnabled( false );
-        cli.createArg().setLine( new File( "/usr/bin/ps" ).canExecute() ? UNIX_CMD1 : UNIX_CMD2 );
-        final AtomicReference<ProcessInfo> processInfo = new AtomicReference<ProcessInfo>( INVALID_PROCESS_INFO );
-        try
+        ProcessInfoConsumer reader = new ProcessInfoConsumer()
         {
-            final int exitCode = executeCommandLine( cli, new StreamConsumer()
-                    {
-                        @Override
-                        public void consumeLine( String line )
-                        {
-                            if ( processInfo.get().isValid() )
-                            {
-                                return;
-                            }
-                            line = line.trim();
-                            if ( !line.isEmpty() )
-                            {
-                                Matcher matcher = UNIX_CMD_OUT_PATTERN.matcher( line );
-                                if ( matcher.matches() )
-                                {
-                                    long pidUptime = fromDays( matcher )
-                                                             + fromHours( matcher )
-                                                             + fromMinutes( matcher )
-                                                             + fromSeconds( matcher );
-                                    processInfo.set( ProcessInfo.unixProcessInfo( pidUptime ) );
-                                }
-                            }
-                        }
-                    }, null
-            );
-            return exitCode == 0 ? processInfo.get() : INVALID_PROCESS_INFO;
-        }
-        catch ( CommandLineException e )
-        {
-            return INVALID_PROCESS_INFO;
-        }
-    }
-
-    static String pid()
-    {
-        String processName = ManagementFactory.getRuntimeMXBean().getName();
-        if ( processName != null && processName.contains( "@" ) )
-        {
-            String pid = processName.substring( 0, processName.indexOf( '@' ) ).trim();
-            if ( NUMBER_PATTERN.matcher( pid ).matches() )
+            @Override
+            ProcessInfo consumeLine( String line, ProcessInfo previousProcessInfo )
             {
-                return pid;
+                if ( !previousProcessInfo.isValid() )
+                {
+                    Matcher matcher = UNIX_CMD_OUT_PATTERN.matcher( line );
+                    if ( matcher.matches() )
+                    {
+                        long pidUptime = fromDays( matcher )
+                                                 + fromHours( matcher )
+                                                 + fromMinutes( matcher )
+                                                 + fromSeconds( matcher );
+                        return ProcessInfo.unixProcessInfo( pluginPid, pidUptime );
+                    }
+                }
+                return previousProcessInfo;
             }
-        }
-        return null;
+        };
+
+        return reader.execute( "/bin/sh", "-c", unixPathToPS() + " -o etime= -p " + pluginPid );
     }
 
-    static String pidOnWindows()
+    ProcessInfo windows()
     {
-        final AtomicReference<String> pid = new AtomicReference<String>();
-        Commandline cli = new Commandline();
-        cli.getShell().setQuotedArgumentsEnabled( false );
-        cli.addArguments( WINDOWS_PID_CMD );
-        try
+        ProcessInfoConsumer reader = new ProcessInfoConsumer()
         {
-            final int exitCode = executeCommandLine( cli, new StreamConsumer()
+            private boolean hasHeader;
+
+            @Override
+            ProcessInfo consumeLine( String line, ProcessInfo previousProcessInfo )
+            {
+                if ( !previousProcessInfo.isValid() )
+                {
+                    StringTokenizer args = new StringTokenizer( line );
+                    if ( args.countTokens() == 1 )
                     {
-                        private boolean hasHeader;
-                        private boolean isPidFirst;
-
-                        @Override
-                        public void consumeLine( String line )
+                        if ( hasHeader )
                         {
-                            line = line.trim();
-                            if ( line.isEmpty() )
-                            {
-                                return;
-                            }
-
-                            if ( hasHeader )
-                            {
-                                if ( line.contains( uniqueCommandLineToken ) )
-                                {
-                                    String extractedPid =
-                                            isPidFirst ? extractNumberFromBegin( line ) : extractNumberFromEnd( line );
-                                    pid.set( extractedPid );
-                                }
-                            }
-                            else
-                            {
-                                StringTokenizer args = new StringTokenizer( line );
-                                if ( args.countTokens() == 2 )
-                                {
-                                    String arg0 = args.nextToken();
-                                    String arg1 = args.nextToken();
-                                    isPidFirst = WMIC_PID.equals( arg0 );
-                                    hasHeader = WMIC_PID.equals( arg0 ) || WMIC_CL.equals( arg0 );
-                                    hasHeader &= WMIC_PID.equals( arg1 ) || WMIC_CL.equals( arg1 );
-                                }
-                            }
+                            String startTimestamp = args.nextToken();
+                            return ProcessInfo.windowsProcessInfo( pluginPid, startTimestamp );
                         }
-                    }, null
-            );
-            return exitCode == 0 ? pid.get() : null;
-        }
-        catch ( CommandLineException e )
+                        else
+                        {
+                            hasHeader = WMIC_CREATION_DATE.equals( args.nextToken() );
+                        }
+                    }
+                }
+                return previousProcessInfo;
+            }
+        };
+        String pid = String.valueOf( pluginPid );
+        return reader.execute( "CMD", "/A", "/X", "/C",
+                                     "wmic process where (ProcessId=" + pid + ") get " + WMIC_CREATION_DATE
+        );
+    }
+
+    void destroyActiveCommands()
+    {
+        stopped = true;
+        for ( Process p = destroyableCommands.poll(); p != null; p = destroyableCommands.poll() )
         {
-            return null;
+            p.destroy();
         }
     }
 
-    static ProcessInfo windows( final String pid )
+    private boolean isStopped()
     {
-        Commandline cli = new Commandline();
-        cli.getShell().setQuotedArgumentsEnabled( false );
-        cli.createArg().setLine( String.format( Locale.ROOT, WINDOWS_CMD, pid ) );
+        return stopped;
+    }
 
-        final AtomicReference<ProcessInfo> processInfo = new AtomicReference<ProcessInfo>( INVALID_PROCESS_INFO );
-        try
-        {
-            final int exitCode = executeCommandLine( cli, new StreamConsumer()
-                    {
-                        private boolean hasHeader;
-                        private boolean isStartTimestampFirst;
-
-                        @Override
-                        public void consumeLine( String line )
-                        {
-                            if ( processInfo.get().isValid() )
-                            {
-                                return;
-                            }
-
-                            line = line.trim();
-
-                            if ( line.isEmpty() )
-                            {
-                                return;
-                            }
-
-                            if ( hasHeader )
-                            {
-                                StringTokenizer args = new StringTokenizer( line );
-                                if ( args.countTokens() == 2 )
-                                {
-                                    if ( isStartTimestampFirst )
-                                    {
-                                        String startTimestamp = args.nextToken();
-                                        String ppid = args.nextToken();
-                                        processInfo.set( ProcessInfo.windowsProcessInfo( pid, startTimestamp, ppid ) );
-                                    }
-                                    else
-                                    {
-                                        String ppid = args.nextToken();
-                                        String startTimestamp = args.nextToken();
-                                        processInfo.set( ProcessInfo.windowsProcessInfo( pid, startTimestamp, ppid ) );
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                StringTokenizer args = new StringTokenizer( line );
-                                if ( args.countTokens() == 2 )
-                                {
-                                    String arg0 = args.nextToken();
-                                    String arg1 = args.nextToken();
-                                    isStartTimestampFirst = WMIC_CREATION_DATE.equals( arg0 );
-                                    hasHeader = WMIC_CREATION_DATE.equals( arg0 ) || WMIC_PPID.equals( arg0 );
-                                    hasHeader &= WMIC_CREATION_DATE.equals( arg1 ) || WMIC_PPID.equals( arg1 );
-                                }
-                            }
-                        }
-                    }, null
-            );
-            return exitCode == 0 ? processInfo.get() : INVALID_PROCESS_INFO;
-        }
-        catch ( CommandLineException e )
-        {
-            return INVALID_PROCESS_INFO;
-        }
+    static String unixPathToPS()
+    {
+        return new File( "/usr/bin/ps" ).canExecute() ? "/usr/bin/ps" : "/bin/ps";
     }
 
     static long fromDays( Matcher matcher )
@@ -344,39 +229,67 @@ final class PpidChecker
         return s == null ? 0L : parseLong( s );
     }
 
-    static String extractNumberFromBegin( String line )
+    private static void checkValid( Scanner scanner )
+            throws IOException
     {
-        StringBuilder number = new StringBuilder();
-        for ( int i = 0, len = line.length(); i < len; i++ )
+        IOException exception = scanner.ioException();
+        if ( exception != null )
         {
-            char c = line.charAt( i );
-            if ( isDigit( c ) )
-            {
-                number.append( c );
-            }
-            else
-            {
-                break;
-            }
+            throw exception;
         }
-        return number.toString();
     }
 
-    static String extractNumberFromEnd( String line )
+    /**
+     * Reads standard output from {@link Process}.
+     * <br>
+     * The artifact maven-shared-utils has non-daemon Threads which is an issue in Surefire to satisfy System.exit.
+     * This implementation is taylor made without using any Thread.
+     * It's easy to destroy Process from other Thread.
+     */
+    private abstract class ProcessInfoConsumer
     {
-        StringBuilder number = new StringBuilder();
-        for ( int i = line.length() - 1; i >= 0; i-- )
+        abstract ProcessInfo consumeLine( String line, ProcessInfo previousProcessInfo );
+
+        ProcessInfo execute( String... command )
         {
-            char c = line.charAt( i );
-            if ( isDigit( c ) )
+            ProcessBuilder processBuilder = new ProcessBuilder( command );
+            processBuilder.redirectErrorStream( true );
+            Process process = null;
+            ProcessInfo processInfo = INVALID_PROCESS_INFO;
+            try
             {
-                number.insert( 0, c );
+                process = processBuilder.start();
+                destroyableCommands.add( process );
+                Scanner scanner = new Scanner( process.getInputStream() );
+                while ( scanner.hasNextLine() )
+                {
+                    String line = scanner.nextLine().trim();
+                    processInfo = consumeLine( line, processInfo );
+                }
+                checkValid( scanner );
+                int exitCode = process.waitFor();
+                return exitCode == 0 ? processInfo : INVALID_PROCESS_INFO;
             }
-            else
+            catch ( IOException e )
             {
-                break;
+                return ERR_PROCESS_INFO;
+            }
+            catch ( InterruptedException e )
+            {
+                return ERR_PROCESS_INFO;
+            }
+            finally
+            {
+                if ( process != null )
+                {
+                    destroyableCommands.remove( process );
+                    process.destroy();
+                    closeQuietly( process.getInputStream() );
+                    closeQuietly( process.getErrorStream() );
+                    closeQuietly( process.getOutputStream() );
+                }
             }
         }
-        return number.toString();
     }
+
 }

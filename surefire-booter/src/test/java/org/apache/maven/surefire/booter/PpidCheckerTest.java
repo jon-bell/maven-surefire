@@ -21,7 +21,7 @@ package org.apache.maven.surefire.booter;
 
 import org.junit.Test;
 
-import java.util.concurrent.TimeUnit;
+import java.lang.management.ManagementFactory;
 import java.util.regex.Matcher;
 
 import static org.apache.commons.lang3.SystemUtils.IS_OS_UNIX;
@@ -38,61 +38,29 @@ import static org.junit.Assume.assumeTrue;
 public class PpidCheckerTest
 {
     @Test
-    public void shouldHavePid()
-    {
-        String pid = PpidChecker.pid();
-
-        assertThat( pid )
-                .isNotNull();
-
-        assertThat( pid )
-                .matches( "^\\d+$" );
-    }
-
-    @Test
     public void shouldHavePpidAsWindows()
     {
         assumeTrue( IS_OS_WINDOWS );
 
-        ProcessInfo processInfo = PpidChecker.windows( PpidChecker.pid() );
+        long expectedPid = Long.parseLong( ManagementFactory.getRuntimeMXBean().getName().split( "@" )[0].trim() );
+
+        PpidChecker checker = new PpidChecker( expectedPid );
+        ProcessInfo processInfo = checker.windows();
 
         assertThat( processInfo )
                 .isNotNull();
 
-        assertThat( processInfo.getPID() )
-                .isNotNull();
+        assertThat( checker.canUse() )
+                .isTrue();
+
+        assertThat( checker.isProcessAlive() )
+                .isTrue();
 
         assertThat( processInfo.getPID() )
-                .matches( "^\\d+$" );
+                .isEqualTo( expectedPid );
 
         assertThat( processInfo.getTime() )
                 .isNotNull();
-
-        processInfo = PpidChecker.windows( processInfo.getPID() );
-
-        assertThat( processInfo.getPID() )
-                .isNotNull();
-
-        assertThat( processInfo.getPID() )
-                .matches( "^\\d+$" );
-
-        assertThat( processInfo.getTime() )
-                .isNotNull();
-    }
-
-    @Test
-    public void shouldFindPid()
-    {
-        assumeTrue( IS_OS_WINDOWS );
-
-        PpidChecker.uniqueCommandLineToken = "PpidCheckerTest.args=shouldFindPid";
-        String pid = PpidChecker.pidOnWindows();
-
-        assertThat( pid )
-                .isNotNull();
-
-        assertThat( pid )
-                .isEqualTo( PpidChecker.pid() );
     }
 
     @Test
@@ -100,34 +68,38 @@ public class PpidCheckerTest
     {
         assumeTrue( IS_OS_UNIX );
 
-        ProcessInfo processInfo = PpidChecker.unix();
+        long expectedPid = Long.parseLong( ManagementFactory.getRuntimeMXBean().getName().split( "@" )[0].trim() );
+
+        PpidChecker checker = new PpidChecker( expectedPid );
+        ProcessInfo processInfo = checker.unix();
 
         assertThat( processInfo )
                 .isNotNull();
 
-        assertThat( processInfo.getPID() )
-                .isNotNull();
+        assertThat( checker.canUse() )
+                .isTrue();
+
+        assertThat( checker.isProcessAlive() )
+                .isTrue();
 
         assertThat( processInfo.getPID() )
-                .isEqualTo( "pid not needed on Unix" );
+                .isEqualTo( expectedPid );
 
         assertThat( processInfo.getTime() )
                 .isNotNull();
     }
 
     @Test
-    public void shouldFindAliveParentProcess()
-            throws InterruptedException
+    public void shouldNotFindSuchPID()
     {
-        PpidChecker checker = new PpidChecker();
-
+        PpidChecker checker = new PpidChecker( 1000000L );
         assertThat( checker.canUse() )
                 .isTrue();
 
-        TimeUnit.MILLISECONDS.sleep( 100L );
+        boolean isAlive = checker.isProcessAlive();
 
-        assertThat( checker.isParentProcessAlive() )
-                .isTrue();
+        assertThat( isAlive )
+                .isFalse();
     }
 
     @Test
@@ -168,37 +140,5 @@ public class PpidCheckerTest
         assertThat( PpidChecker.fromHours( m ) ).isEqualTo( 3600L );
         assertThat( PpidChecker.fromMinutes( m ) ).isEqualTo( 300L );
         assertThat( PpidChecker.fromSeconds( m ) ).isEqualTo( 38L );
-    }
-
-    @Test
-    public void shouldExtractNumberFromBegin()
-    {
-        String num = PpidChecker.extractNumberFromBegin( "123 abc" );
-        assertThat( num )
-                .isEqualTo( "123" );
-    }
-
-    @Test
-    public void shouldNotExtractNumberFromBegin()
-    {
-        String num = PpidChecker.extractNumberFromBegin( " 123 abc" );
-        assertThat( num )
-                .isEmpty();
-    }
-
-    @Test
-    public void shouldExtractNumberFromEnd()
-    {
-        String num = PpidChecker.extractNumberFromEnd( "abc 123" );
-        assertThat( num )
-                .isEqualTo( "123" );
-    }
-
-    @Test
-    public void shouldNotExtractNumberFromEnd()
-    {
-        String num = PpidChecker.extractNumberFromEnd( "abs 123 " );
-        assertThat( num )
-                .isEmpty();
     }
 }
